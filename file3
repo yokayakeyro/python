@@ -1,0 +1,48 @@
+ALPHA = 0.3        # 平滑化の強さ (小さいほど滑らか、大きいほど追従が速い)
+MAX_MISSES = 10    # 何フレーム連続で見失ったらトラッキングをリセットするか
+
+cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
+
+video_stream()
+label = '準備中'
+overlay_url = ''
+smoothed = None    # 平滑化した (x, y, w, h)
+misses = 0
+
+while True:
+    reply = video_frame(label, overlay_url)
+    if not reply or not reply['img']:
+        break  # 映像をクリックして終了した
+
+    frame = js_to_image(reply['img'])
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80)
+    )
+
+    if len(faces) > 0:
+        # 一番大きい顔を追跡対象にする
+        target = np.array(max(faces, key=lambda f: f[2] * f[3]), dtype=float)
+        smoothed = target if smoothed is None else ALPHA * target + (1 - ALPHA) * smoothed
+        misses = 0
+    else:
+        misses += 1
+        if misses > MAX_MISSES:
+            smoothed = None
+
+    # 透明な画像に枠と中心点だけ描いて、ブラウザ側で映像に重ねる
+    height, width = frame.shape[:2]
+    overlay = np.zeros((height, width, 4), dtype=np.uint8)
+    if smoothed is not None:
+        x, y, w, h = smoothed.astype(int)
+        cx, cy = x + w // 2, y + h // 2
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 255, 0, 255), 3)
+        cv2.circle(overlay, (cx, cy), 6, (0, 0, 255, 255), -1)
+        label = 'center=({}, {})'.format(cx, cy)
+    else:
+        label = '顔が見つかりません'
+    overlay_url = overlay_to_data_url(overlay)
+
+print('終了しました')
