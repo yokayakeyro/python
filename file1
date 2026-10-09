@@ -1,0 +1,22 @@
+import cv2
+
+print("OpenCV", cv2.__version__)
+
+if not hasattr(cv2, "CascadeClassifier"):
+    # OpenCV 5系には CascadeClassifier がないので、4系を入れ直す
+    import subprocess
+    import sys
+
+    for args in (
+        ["uninstall", "-y", "opencv-python", "opencv-python-headless", "opencv-contrib-python"],
+        ["install", "-q", "opencv-python-headless<5"],
+    ):
+        subprocess.run([sys.executable, "-m", "pip", *args], check=True)
+    print("OpenCV 4系を入れ直しました。")
+    print("「ランタイム → セッションを再起動」してから、このセルをもう一度実行してください。")
+else:
+    cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
+    assert not cascade.empty(), "顔検出モデルを読み込めませんでした"
+    print("OK: 顔検出モデルを読み込めました")
