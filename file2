@@ -1,0 +1,156 @@
+import numpy as np
+import cv2
+from base64 import b64decode, b64encode
+from IPython.display import display, Javascript
+from google.colab.output import eval_js
+
+# ブラウザ側: カメラ映像を表示し、1フレームずつPythonへ渡す。
+# Pythonから受け取った透明PNG(枠線)を映像の上に重ねる。
+# 映像と重ね画像はどちらも左右反転(鏡表示)にしている。
+JS_CODE = '''
+var video;
+var div = null;
+var stream;
+var captureCanvas;
+var imgElement;
+var labelElement;
+var pendingResolve = null;
+var shutdown = false;
+
+function removeDom() {
+  stream.getVideoTracks()[0].stop();
+  video.remove();
+  div.remove();
+  video = null;
+  div = null;
+  stream = null;
+  imgElement = null;
+  captureCanvas = null;
+  labelElement = null;
+}
+
+function onAnimationFrame() {
+  if (!shutdown) {
+    window.requestAnimationFrame(onAnimationFrame);
+  }
+  if (pendingResolve) {
+    var result = "";
+    if (!shutdown) {
+      captureCanvas.getContext('2d').drawImage(video, 0, 0, 640, 480);
+      result = captureCanvas.toDataURL('image/jpeg', 0.8);
+    }
+    var lp = pendingResolve;
+    pendingResolve = null;
+    lp(result);
+  }
+}
+
+async function createDom() {
+  if (div !== null) {
+    return stream;
+  }
+
+  div = document.createElement('div');
+  div.style.border = '2px solid black';
+  div.style.padding = '3px';
+  div.style.width = '100%';
+  div.style.maxWidth = '640px';
+  document.body.appendChild(div);
+
+  const statusRow = document.createElement('div');
+  statusRow.innerHTML = '<span>状態: </span>';
+  labelElement = document.createElement('span');
+  labelElement.innerText = '準備中';
+  labelElement.style.fontWeight = 'bold';
+  statusRow.appendChild(labelElement);
+  div.appendChild(statusRow);
+
+  video = document.createElement('video');
+  video.style.display = 'block';
+  video.style.transform = 'scaleX(-1)';
+  video.width = div.clientWidth - 6;
+  video.setAttribute('playsinline', '');
+  video.onclick = () => { shutdown = true; };
+  stream = await navigator.mediaDevices.getUserMedia(
+      {video: {facingMode: 'user', width: 640, height: 480}});
+  div.appendChild(video);
+
+  imgElement = document.createElement('img');
+  imgElement.style.position = 'absolute';
+  imgElement.style.zIndex = 1;
+  imgElement.style.transform = 'scaleX(-1)';
+  imgElement.onclick = () => { shutdown = true; };
+  div.appendChild(imgElement);
+
+  const instruction = document.createElement('div');
+  instruction.innerHTML =
+      '<span style="color: red; font-weight: bold;">終了するにはここか映像をクリック</span>';
+  instruction.onclick = () => { shutdown = true; };
+  div.appendChild(instruction);
+
+  video.srcObject = stream;
+  await video.play();
+
+  captureCanvas = document.createElement('canvas');
+  captureCanvas.width = 640;
+  captureCanvas.height = 480;
+  window.requestAnimationFrame(onAnimationFrame);
+
+  return stream;
+}
+
+async function stream_frame(label, imgData) {
+  if (shutdown) {
+    removeDom();
+    shutdown = false;
+    return '';
+  }
+
+  stream = await createDom();
+
+  if (label != '') {
+    labelElement.innerHTML = label;
+  }
+
+  if (imgData != '') {
+    var videoRect = video.getClientRects()[0];
+    imgElement.style.top = videoRect.top + 'px';
+    imgElement.style.left = videoRect.left + 'px';
+    imgElement.style.width = videoRect.width + 'px';
+    imgElement.style.height = videoRect.height + 'px';
+    imgElement.src = imgData;
+  }
+
+  var result = await new Promise(function(resolve, reject) {
+    pendingResolve = resolve;
+  });
+
+  if (shutdown || result === '') {
+    removeDom();
+    shutdown = false;
+    return '';
+  }
+
+  return {'img': result};
+}
+'''
+
+
+def video_stream():
+    display(Javascript(JS_CODE))
+
+
+def video_frame(label, overlay_url):
+    return eval_js('stream_frame("{}", "{}")'.format(label, overlay_url))
+
+
+def js_to_image(data_url):
+    # ブラウザから届いたJPEG(data URL)をOpenCVのBGR画像にする
+    image_bytes = b64decode(data_url.split(',')[1])
+    return cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
+def overlay_to_data_url(overlay_bgra):
+    # 透明PNGにして、ブラウザへ返せる文字列にする
+    ok, buf = cv2.imencode('.png', overlay_bgra)
+    return 'data:image/png;base64,' + b64encode(buf.tobytes()).decode('utf-8')
